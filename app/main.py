@@ -5,16 +5,18 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, func
 from .config import settings
 from .db import init_db, Session, Content
-from .scanner import Scanner, scheduler, metadata_scheduler
+from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
 
 CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime','Anime')]
+LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),('hi','Hindi'),('bn','Bengali'),('mr','Marathi'),('gu','Gujarati'),('pa','Punjabi'),('en','English'),('ko','Korean'),('ja','Japanese'),('zh','Chinese'),('es','Spanish'),('fr','French'),('de','German'),('pt','Portuguese'),('ru','Russian'),('ar','Arabic'),('tr','Turkish'),('id','Indonesian'),('th','Thai')]
+LANGUAGE_OPTIONS = [{'title': title, 'value': code} for code, title in LANGUAGES]
 scanner = Scanner()
 
 def manifest():
     cats = []
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
-                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False},{'name':'skip','isRequired':False}]})
+                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'skip','isRequired':False}]})
     return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tmdb:']}
@@ -25,7 +27,7 @@ def item(row):
     if row.tamil_title and row.tamil_title != row.title: name = f'{row.tamil_title} ({row.title})'
     obj = {'id':f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
            'poster':row.poster,'background':row.backdrop,'year':row.year,'imdbRating':row.rating,'genres':row.genres or [],
-           'director':row.director,'cast':[x.get('name') for x in (row.cast or [])], 'releaseInfo':str(row.year or '')}
+           'director':row.director,'cast':[x.get('name') for x in (row.cast or [])], 'releaseInfo':str(row.year or ''), 'language':row.original_language}
     if row.media_type == 'series': obj['videos'] = []
     return obj
 
@@ -34,8 +36,9 @@ async def lifespan(app):
     await init_db()
     task = asyncio.create_task(scheduler(scanner))
     refresh_task = asyncio.create_task(metadata_scheduler(scanner))
+    progress_task = asyncio.create_task(progress_logger(scanner))
     yield
-    task.cancel(); refresh_task.cancel()
+    task.cancel(); refresh_task.cancel(); progress_task.cancel()
 
 app = FastAPI(title='Telegram TMDB Stremio Addon', lifespan=lifespan)
 @app.get('/manifest.json')
@@ -50,6 +53,7 @@ async def catalog_impl(catalog_id, request):
     if catalog_id not in {x[0] for x in CATALOGS}: return JSONResponse({'metas':[]})
     q = request.query_params.get('search','').strip()
     genre = request.query_params.get('genre','').strip().lower()
+    language = request.query_params.get('language','').strip().lower()
     try: skip = max(0, int(request.query_params.get('skip','0')))
     except ValueError: skip = 0
     page = settings.page_size
@@ -57,6 +61,7 @@ async def catalog_impl(catalog_id, request):
         stmt = select(Content).where(Content.catalog == catalog_id)
         if q: stmt = stmt.where(Content.title.ilike(f'%{q}%'))
         if genre: stmt = stmt.where(Content.genres.contains([request.query_params.get('genre')]))
+        if language: stmt = stmt.where(Content.original_language == language)
         # Tamil original series first; then newest metadata.
         stmt = stmt.order_by(Content.sort_priority.asc(), Content.year.desc().nullslast(), Content.title.asc()).offset(skip).limit(page)
         rows = (await db.execute(stmt)).scalars().all()
@@ -71,4 +76,12 @@ async def meta(kind: str, meta_id: str):
     return {'meta': item(row) if row else None}
 
 @app.get('/health')
-async def health(): return {'ok':True}
+async def health():
+    return {
+        'ok': True,
+        'scan_running': scanner.running,
+        'last_scan_started': scanner.last_scan_started,
+        'last_scan_completed': scanner.last_scan_completed,
+        'last_scan_stats': scanner.last_scan_stats,
+        'current_scan_stats': scanner.current_scan_stats,
+    }

@@ -31,10 +31,22 @@ def catalog_for(p, details, channel=None):
 SOUTH_LANGUAGES = {'ta','te','ml','kn'}
 
 class Scanner:
-    def __init__(self): self.tmdb = TMDB(); self.running = False
+    def __init__(self):
+        self.tmdb = TMDB()
+        self.running = False
+        self.last_scan_started = None
+        self.last_scan_completed = None
+        self.last_scan_stats = {}
+        self.current_scan_stats = {}
     async def scan(self):
-        if self.running: return
+        if self.running:
+            print('scan skipped: another scan is already running', flush=True)
+            return
         self.running = True
+        self.last_scan_started = datetime.utcnow().isoformat() + 'Z'
+        stats = {'channels': 0, 'messages': 0, 'matched': 0, 'unmatched': 0, 'errors': 0}
+        self.current_scan_stats = stats
+        print(f'scan started: {len(settings.channels)} configured channel(s)', flush=True)
         try:
             client = TelegramClient(StringSession(settings.telegram_session_string), settings.telegram_api_id, settings.telegram_api_hash)
             await client.start()
@@ -43,6 +55,7 @@ class Scanner:
                 # reuse the series result and never create episode metadata rows.
                 match_cache = {}
                 for channel in settings.channels:
+                    stats['channels'] += 1
                     try:
                         channel_ref = channel.get('id') if 'id' in channel else channel.get('username')
                         if channel_ref is None:
@@ -54,6 +67,7 @@ class Scanner:
                         entity = await client.get_entity(channel_ref)
                         kwargs = {'limit': settings.max_messages_per_channel or None}
                         async for message in client.iter_messages(entity, **kwargs):
+                            stats['messages'] += 1
                             if not message or not (getattr(message, 'file', None) or getattr(message, 'message', None)): continue
                             raw = media_name(message)
                             if not raw: continue
@@ -66,8 +80,10 @@ class Scanner:
                                 details, confidence = await self.tmdb.match(parsed.title, parsed.year, parsed.media_type)
                                 match_cache[match_key] = (details, confidence)
                             if not details:
+                                stats['unmatched'] += 1
                                 db.add(Unmatched(raw_name=raw[:1000], cleaned_title=parsed.title[:500], year=parsed.year, media_type=parsed.media_type, reason=f'no confident TMDB match ({confidence:.2f})', created_at=datetime.utcnow()))
                                 continue
+                            stats['matched'] += 1
                             catalog = catalog_for(parsed, details, channel)
                             result = await db.execute(select(Content).where(Content.tmdb_id == details['tmdb_id'], Content.media_type == parsed.media_type))
                             existing = result.scalar_one_or_none()
@@ -78,13 +94,17 @@ class Scanner:
                                 existing.updated_at = __import__('datetime').datetime.utcnow()
                             else:
                                 is_tamil_series = catalog == 'tamil_series' and details.get('original_language') == 'ta'
-                                record = {k: v for k, v in details.items() if k != 'original_language'}
+                                record = dict(details)
                                 record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons; record['updated_at'] = datetime.utcnow()
                                 db.add(Content(**record))
                             await db.commit()
                     except Exception as e:
-                        print(f'channel scan failed for {channel}: {e}')
+                        stats['errors'] += 1
+                        print(f'channel scan failed for {channel}: {e}', flush=True)
             await client.disconnect()
+            self.last_scan_stats = stats
+            self.last_scan_completed = datetime.utcnow().isoformat() + 'Z'
+            print(f'scan completed: {stats}', flush=True)
         finally: self.running = False
 
     async def refresh_metadata(self):
@@ -112,6 +132,15 @@ async def scheduler(scanner):
             else: await scanner.scan()
         except Exception as e: print(f'scheduled scan failed: {e}')
         await asyncio.sleep(settings.scan_interval_hours * 3600)
+
+async def progress_logger(scanner):
+    """Emit a Railway-friendly progress heartbeat every minute."""
+    while True:
+        await asyncio.sleep(60)
+        if scanner.running:
+            print(f'scan progress: started={scanner.last_scan_started} stats={scanner.current_scan_stats}', flush=True)
+        else:
+            print(f'scan idle: last_completed={scanner.last_scan_completed} stats={scanner.last_scan_stats}', flush=True)
 
 async def metadata_scheduler(scanner):
     while True:

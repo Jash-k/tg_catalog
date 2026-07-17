@@ -26,6 +26,7 @@ class Content(Base):
     catalog: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
     sort_priority: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
+    original_language: Mapped[str | None] = mapped_column(String(10), index=True)
     english_title: Mapped[str | None] = mapped_column(String(500))
     tamil_title: Mapped[str | None] = mapped_column(String(500))
     overview: Mapped[str | None] = mapped_column(Text)
@@ -39,7 +40,7 @@ class Content(Base):
     release_date: Mapped[str | None] = mapped_column(String(20))
     year: Mapped[int | None] = mapped_column(Integer, index=True)
     seasons: Mapped[list] = mapped_column(JSON, default=list)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     __table_args__ = (UniqueConstraint('tmdb_id', 'media_type', name='uq_content_tmdb_type'),)
 
 class Unmatched(Base):
@@ -50,7 +51,7 @@ class Unmatched(Base):
     year: Mapped[int | None] = mapped_column(Integer)
     media_type: Mapped[str] = mapped_column(String(10))
     reason: Mapped[str] = mapped_column(String(1000))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 async def init_db():
     import os
@@ -58,3 +59,6 @@ async def init_db():
         os.makedirs('data', exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        if database_url.startswith('postgresql+asyncpg://'):
+            await conn.exec_driver_sql("ALTER TABLE content ADD COLUMN IF NOT EXISTS original_language VARCHAR(10)")
+            await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_content_original_language ON content (original_language)")
