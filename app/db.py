@@ -5,7 +5,16 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import JSON
 from .config import settings
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+# Railway may provide DATABASE_URL as postgres:// or postgresql://.
+# SQLAlchemy's default PostgreSQL driver is psycopg2, but this service uses asyncpg.
+database_url = settings.database_url
+if database_url.startswith('postgres://'):
+    database_url = 'postgresql+asyncpg://' + database_url[len('postgres://'):]
+elif database_url.startswith('postgresql://'):
+    database_url = 'postgresql+asyncpg://' + database_url[len('postgresql://'):]
+elif database_url.startswith('postgresql+psycopg2://'):
+    database_url = 'postgresql+asyncpg://' + database_url[len('postgresql+psycopg2://'):]
+engine = create_async_engine(database_url, pool_pre_ping=True)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 class Base(DeclarativeBase): pass
 
