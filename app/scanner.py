@@ -134,10 +134,13 @@ async def scheduler(scanner):
         try:
             print('scheduler tick: starting scan check', flush=True)
             if first:
-                async with Session() as db: empty = not (await db.execute(select(Content.id).limit(1))).scalar_one_or_none()
-                if empty: await scanner.scan()
+                async with Session() as db:
+                    empty = (await db.execute(select(Content.id).limit(1))).scalar_one_or_none() is None
+                print('first scan mode: full historical scan' if empty else 'first scan mode: existing catalog; refreshing channel scan', flush=True)
+                await scanner.scan()
                 first = False
-            else: await scanner.scan()
+            else:
+                await scanner.scan()
         except Exception as e: print(f'scheduled scan failed: {e}')
         await asyncio.sleep(settings.scan_interval_hours * 3600)
 
