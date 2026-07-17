@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, func
 from .config import settings
@@ -9,7 +10,10 @@ from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
 
 CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime','Anime')]
 LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),('hi','Hindi'),('bn','Bengali'),('mr','Marathi'),('gu','Gujarati'),('pa','Punjabi'),('en','English'),('ko','Korean'),('ja','Japanese'),('zh','Chinese'),('es','Spanish'),('fr','French'),('de','German'),('pt','Portuguese'),('ru','Russian'),('ar','Arabic'),('tr','Turkish'),('id','Indonesian'),('th','Thai')]
-LANGUAGE_OPTIONS = [{'title': title, 'value': code} for code, title in LANGUAGES]
+# Stremio manifest options must be an array of strings, not {title,value} objects.
+# The backend accepts the language code from the selected option.
+LANGUAGE_OPTIONS = [title for code, title in LANGUAGES]
+LANGUAGE_CODES = {title.lower(): code for code, title in LANGUAGES}
 scanner = Scanner()
 
 def manifest():
@@ -41,6 +45,7 @@ async def lifespan(app):
     task.cancel(); refresh_task.cancel(); progress_task.cancel()
 
 app = FastAPI(title='Telegram TMDB Stremio Addon', lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
 @app.get('/manifest.json')
 async def get_manifest(): return manifest()
 @app.get('/catalog/{kind}/{catalog_id}.json')
@@ -54,6 +59,7 @@ async def catalog_impl(catalog_id, request):
     q = request.query_params.get('search','').strip()
     genre = request.query_params.get('genre','').strip().lower()
     language = request.query_params.get('language','').strip().lower()
+    language = LANGUAGE_CODES.get(language, language)
     try: skip = max(0, int(request.query_params.get('skip','0')))
     except ValueError: skip = 0
     page = settings.page_size
