@@ -26,7 +26,7 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     text = raw.replace('_', ' ').replace('.', ' ').replace('-', ' - ')
     anime = bool(channel.get('category') == 'anime' or re.search(r'(?i)\banime\b|\[\w+\]\s*[-–].*\b(?:1080p|720p)\b', raw))
     dubbed = bool(re.search(r'(?i)\b(?:tamil\s*(?:dub|audio)|tam\s*(?:dub|audio)|tamil dubbed|dual audio tamil|tamil track)\b', raw))
-    seasons = sorted({int(x) for x in re.findall(r'(?i)\bS(?:eason)?\s*([0-9]{1,2})\b', raw)})
+    seasons = sorted({int(x) for x in re.findall(r'(?i)\bS(?:eason)?\s*([0-9]{1,2})(?=\b|\s*E)', raw)})
     seasons += [int(a) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons += [int(b) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons = sorted(set(seasons))
@@ -36,7 +36,9 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     title = re.sub('|'.join(WATERMARKS), ' ', text)
     title = re.sub(QUALITY, ' ', title)
     title = re.sub(r'(?i)\b(?:tamil|telugu|malayalam|kannada|hindi|english|japanese)\s*(?:audio|dub(?:bed)?)\b', ' ', title)
-    title = re.sub(r'\[[^\]]*\]|\([^)]*(?:www|telegram|subs?|audio|codec)[^)]*\)', ' ', title, flags=re.I)
+    title = re.sub(r'\[[^\]]*\]|\([^)]*(?:www|telegram|subs?|audio|codec|\+|ddp|dts|w4f|mack)[^)]*\)', ' ', title, flags=re.I)
+    # Remove common scene/release-group suffixes, e.g. (W4F-Mack), after tags are gone.
+    title = re.sub(r'\s*\([^)]{1,30}\)\s*$', ' ', title)
     if year_match: title = title[:year_match.start()]
     title = re.sub(r'(?i)\bS(?:eason)?\s*\d{1,2}\s*(?:[-–]?\s*S\d{1,2})?(?:\s*E\d{1,3})?\b', ' ', title)
     title = re.sub(r'(?i)\bE\d{1,3}\b|\b(?:mkv|mp4|avi|mov|webm)\b', ' ', title)

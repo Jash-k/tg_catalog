@@ -38,6 +38,9 @@ class Scanner:
             client = TelegramClient(StringSession(settings.telegram_session_string), settings.telegram_api_id, settings.telegram_api_hash)
             await client.start()
             async with Session() as db:
+                # One TMDB lookup per normalized title during a scan. Episode files
+                # reuse the series result and never create episode metadata rows.
+                match_cache = {}
                 for channel in settings.channels:
                     try:
                         channel_ref = channel.get('id') if 'id' in channel else channel.get('username')
@@ -55,7 +58,12 @@ class Scanner:
                             if not raw: continue
                             parsed = parse_filename(raw, channel)
                             if len(parsed.title) < 2: continue
-                            details, confidence = await self.tmdb.match(parsed.title, parsed.year, parsed.media_type)
+                            match_key = (parsed.title.casefold(), parsed.year, parsed.media_type)
+                            if match_key in match_cache:
+                                details, confidence = match_cache[match_key]
+                            else:
+                                details, confidence = await self.tmdb.match(parsed.title, parsed.year, parsed.media_type)
+                                match_cache[match_key] = (details, confidence)
                             if not details:
                                 db.add(Unmatched(raw_name=raw[:1000], cleaned_title=parsed.title[:500], year=parsed.year, media_type=parsed.media_type, reason=f'no confident TMDB match ({confidence:.2f})'))
                                 continue
@@ -66,12 +74,12 @@ class Scanner:
                                 if parsed.media_type == 'series': existing.seasons = sorted(set((existing.seasons or []) + parsed.seasons))
                                 existing.catalog = catalog
                                 existing.sort_priority = 0 if catalog == 'tamil_series' and details.get('original_language') == 'ta' else existing.sort_priority
-                                existing.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
+                                existing.updated_at = __import__('datetime').datetime.utcnow()
                             else:
                                 is_tamil_series = catalog == 'tamil_series' and details.get('original_language') == 'ta'
-                                details.pop('original_language', None)
-                                details['catalog'] = catalog; details['sort_priority'] = 0 if is_tamil_series else 1; details['seasons'] = parsed.seasons
-                                db.add(Content(**details))
+                                record = {k: v for k, v in details.items() if k != 'original_language'}
+                                record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons
+                                db.add(Content(**record))
                             await db.commit()
                     except Exception as e:
                         print(f'channel scan failed for {channel}: {e}')
