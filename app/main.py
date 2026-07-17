@@ -176,6 +176,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # e. API routes
 app.include_router(api_router, prefix="/api/v1")
 
+# Stremio addon protocol routes live at the domain root (Stremio requires
+# the standard /manifest.json, /catalog/... and /meta/... paths).
+from app.api.endpoints import stremio as stremio_endpoints  # noqa: E402
+
+app.include_router(stremio_endpoints.router)
+
 
 @app.get("/", include_in_schema=False)
 async def root() -> dict:
@@ -186,4 +192,5 @@ async def root() -> dict:
         "redoc": "/redoc",
         "api": "/api/v1",
         "health": "/api/v1/health",
+        "stremio_addon": "/manifest.json",
     }

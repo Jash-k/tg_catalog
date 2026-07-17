@@ -130,3 +130,20 @@ def parse_comma_list(value: Optional[str]) -> Optional[List[str]]:
 
 def clamp(value: int, lower: int, upper: int) -> int:
     return max(lower, min(upper, value))
+
+
+_DB_CREDENTIALS_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+(@)")
+
+
+def mask_database_url(url: str) -> str:
+    """Mask the password inside a database URL for safe logging."""
+    return _DB_CREDENTIALS_RE.sub(r"\1***\2", url or "")
+
+
+def database_host_port(url: str) -> Tuple[str, int]:
+    """Extract (host, port) from a database URL (driver-agnostic)."""
+    from urllib.parse import urlparse
+
+    normalized = re.sub(r"^postgresql\+\w+://", "postgresql://", url)
+    parsed = urlparse(normalized)
+    return parsed.hostname or "", parsed.port or 5432

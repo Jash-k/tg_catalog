@@ -5,12 +5,15 @@ environment variables (Railway) or a local ``.env`` file.
 """
 from __future__ import annotations
 
+import os
 import re
 from functools import lru_cache
 from typing import List, Optional
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/tamilcatalog"
 
 
 class Settings(BaseSettings):
@@ -24,7 +27,15 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     # Database
     # ------------------------------------------------------------------
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/tamilcatalog"
+    DATABASE_URL: str = DEFAULT_DATABASE_URL
+    # Railway Postgres plugin component variables. When DATABASE_URL is
+    # missing or still the .env.example placeholder, the full URL is
+    # composed from these automatically.
+    PGHOST: str = ""
+    PGPORT: str = ""
+    PGUSER: str = ""
+    PGPASSWORD: str = ""
+    PGDATABASE: str = ""
 
     # ------------------------------------------------------------------
     # Telegram
@@ -89,6 +100,26 @@ class Settings(BaseSettings):
         if value.startswith("postgresql://"):
             value = "postgresql+asyncpg://" + value[len("postgresql://"):]
         return value
+
+    @model_validator(mode="after")
+    def _compose_db_url_from_pg_vars(self) -> "Settings":
+        """Compose DATABASE_URL from Railway's PG* component variables.
+
+        Kicks in when DATABASE_URL was never provided (still the localhost
+        default and DATABASE_URL is absent from the environment) or when it
+        is literally the .env.example placeholder (...@host:5432/...).
+        """
+        env_has_url = bool(os.environ.get("DATABASE_URL"))
+        is_placeholder = "user:pass@host" in (self.DATABASE_URL or "")
+        is_default = (not env_has_url) and self.DATABASE_URL == DEFAULT_DATABASE_URL
+        if (is_placeholder or is_default) and self.PGHOST:
+            port = self.PGPORT or "5432"
+            user = self.PGUSER or "postgres"
+            db = self.PGDATABASE or "postgres"
+            self.DATABASE_URL = (
+                f"postgresql+asyncpg://{user}:{self.PGPASSWORD}@{self.PGHOST}:{port}/{db}"
+            )
+        return self
 
     @property
     def telegram_api_id_int(self) -> Optional[int]:

@@ -31,7 +31,13 @@ def get_engine() -> AsyncEngine:
     """Create (once) and return the global async engine."""
     global _engine, _session_factory
     if _engine is None:
+        from app.utils.helpers import mask_database_url
+
         settings = get_settings()
+        logger.info(
+            "Creating database engine",
+            extra={"db_url": mask_database_url(settings.DATABASE_URL)},
+        )
         _engine = create_async_engine(
             settings.DATABASE_URL,
             echo=False,
