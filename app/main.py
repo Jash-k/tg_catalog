@@ -84,4 +84,5 @@ async def health():
         'last_scan_completed': scanner.last_scan_completed,
         'last_scan_stats': scanner.last_scan_stats,
         'current_scan_stats': scanner.current_scan_stats,
+        'last_scan_error': scanner.last_scan_error,
     }

@@ -38,12 +38,14 @@ class Scanner:
         self.last_scan_completed = None
         self.last_scan_stats = {}
         self.current_scan_stats = {}
+        self.last_scan_error = None
     async def scan(self):
         if self.running:
             print('scan skipped: another scan is already running', flush=True)
             return
         self.running = True
         self.last_scan_started = datetime.utcnow().isoformat() + 'Z'
+        self.last_scan_error = None
         stats = {'channels': 0, 'messages': 0, 'matched': 0, 'unmatched': 0, 'errors': 0}
         self.current_scan_stats = stats
         print(f'scan started: {len(settings.channels)} configured channel(s)', flush=True)
@@ -105,6 +107,10 @@ class Scanner:
             self.last_scan_stats = stats
             self.last_scan_completed = datetime.utcnow().isoformat() + 'Z'
             print(f'scan completed: {stats}', flush=True)
+        except Exception as e:
+            self.last_scan_error = repr(e)
+            print(f'scan failed: {e}', flush=True)
+            raise
         finally: self.running = False
 
     async def refresh_metadata(self):
@@ -123,8 +129,10 @@ class Scanner:
 
 async def scheduler(scanner):
     first = True
+    print('scheduler started', flush=True)
     while True:
         try:
+            print('scheduler tick: starting scan check', flush=True)
             if first:
                 async with Session() as db: empty = not (await db.execute(select(Content.id).limit(1))).scalar_one_or_none()
                 if empty: await scanner.scan()
