@@ -15,19 +15,19 @@ def media_name(message):
     if getattr(message, 'message', None): names.append(message.message)
     return max(names, key=len, default='')
 
-def catalog_for(p, details, channel):
-    cat = channel.get('category','other').lower()
+def catalog_for(p, details, channel=None):
+    # Classification is metadata-driven, so mixed channels do not need manual labels.
     original_lang = (details.get('original_language') or '').lower()
-    if p.anime: return 'anime'
+    genres = {x.lower() for x in (details.get('genres') or [])}
+    is_anime = p.anime or (original_lang == 'ja' and 'animation' in genres)
+    if is_anime: return 'anime'
     if p.media_type == 'series':
-        return 'tamil_series' if cat in SOUTH else 'other_series'
+        return 'tamil_series' if original_lang in SOUTH_LANGUAGES else 'other_series'
     if p.dubbed: return 'dubbed_movies'
-    if cat == 'tamil' and channel.get('original', True) and original_lang in ('ta',''):
-        return 'tamil_movies'
-    if cat not in SOUTH: return 'other_movies'
-    # South Indian non-Tamil movies have no dedicated catalog; retain them in Other Movies
-    # so no matched content is silently lost.
+    if original_lang == 'ta': return 'tamil_movies'
     return 'other_movies'
+
+SOUTH_LANGUAGES = {'ta','te','ml','kn'}
 
 class Scanner:
     def __init__(self): self.tmdb = TMDB(); self.running = False
@@ -40,7 +40,14 @@ class Scanner:
             async with Session() as db:
                 for channel in settings.channels:
                     try:
-                        entity = await client.get_entity(channel['username'])
+                        channel_ref = channel.get('id') if 'id' in channel else channel.get('username')
+                        if channel_ref is None:
+                            raise ValueError('channel requires id or username')
+                        # Telegram supergroup/channel IDs are commonly written as -100123...
+                        # Accept either a JSON number or a string in Railway variables.
+                        if isinstance(channel_ref, str) and channel_ref.strip().lstrip('-').isdigit():
+                            channel_ref = int(channel_ref.strip())
+                        entity = await client.get_entity(channel_ref)
                         kwargs = {'limit': settings.max_messages_per_channel or None}
                         async for message in client.iter_messages(entity, **kwargs):
                             if not message or not (getattr(message, 'file', None) or getattr(message, 'message', None)): continue
@@ -58,11 +65,12 @@ class Scanner:
                             if existing:
                                 if parsed.media_type == 'series': existing.seasons = sorted(set((existing.seasons or []) + parsed.seasons))
                                 existing.catalog = catalog
-                                existing.sort_priority = 0 if catalog == 'tamil_series' and channel.get('category') == 'tamil' else existing.sort_priority
+                                existing.sort_priority = 0 if catalog == 'tamil_series' and details.get('original_language') == 'ta' else existing.sort_priority
                                 existing.updated_at = __import__('datetime').datetime.now(__import__('datetime').timezone.utc)
                             else:
+                                is_tamil_series = catalog == 'tamil_series' and details.get('original_language') == 'ta'
                                 details.pop('original_language', None)
-                                details['catalog'] = catalog; details['sort_priority'] = 0 if catalog == 'tamil_series' and channel.get('category') == 'tamil' else 1; details['seasons'] = parsed.seasons
+                                details['catalog'] = catalog; details['sort_priority'] = 0 if is_tamil_series else 1; details['seasons'] = parsed.seasons
                                 db.add(Content(**details))
                             await db.commit()
                     except Exception as e:
