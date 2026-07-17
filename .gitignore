@@ -1,0 +1,25 @@
+# Environment
+.env
+*.session
+*.session-journal
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.Python
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Data & logs
+data/
+logs/
+*.log
+
+# Alembic local leftovers
+alembic.ini.bak

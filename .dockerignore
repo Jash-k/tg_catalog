@@ -1,0 +1,26 @@
+# Never bake secrets or dev artifacts into the image
+.env
+*.session
+*.session-journal
+
+# VCS / editors
+.git
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# Python caches / venvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Logs & local data
+logs/
+data/
+*.log
+
+# Compose is for local dev only
+docker-compose.yml
