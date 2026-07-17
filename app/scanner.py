@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from sqlalchemy import select
@@ -65,7 +66,7 @@ class Scanner:
                                 details, confidence = await self.tmdb.match(parsed.title, parsed.year, parsed.media_type)
                                 match_cache[match_key] = (details, confidence)
                             if not details:
-                                db.add(Unmatched(raw_name=raw[:1000], cleaned_title=parsed.title[:500], year=parsed.year, media_type=parsed.media_type, reason=f'no confident TMDB match ({confidence:.2f})'))
+                                db.add(Unmatched(raw_name=raw[:1000], cleaned_title=parsed.title[:500], year=parsed.year, media_type=parsed.media_type, reason=f'no confident TMDB match ({confidence:.2f})', created_at=datetime.utcnow()))
                                 continue
                             catalog = catalog_for(parsed, details, channel)
                             result = await db.execute(select(Content).where(Content.tmdb_id == details['tmdb_id'], Content.media_type == parsed.media_type))
@@ -78,7 +79,7 @@ class Scanner:
                             else:
                                 is_tamil_series = catalog == 'tamil_series' and details.get('original_language') == 'ta'
                                 record = {k: v for k, v in details.items() if k != 'original_language'}
-                                record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons
+                                record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons; record['updated_at'] = datetime.utcnow()
                                 db.add(Content(**record))
                             await db.commit()
                     except Exception as e:
