@@ -18,10 +18,19 @@ class Settings(BaseSettings):
 
     @property
     def channels(self):
-        value = json.loads(self.telegram_channels)
-        if isinstance(value, dict):
-            value = [value]
-        return value
+        raw = self.telegram_channels.strip()
+        try:
+            value = json.loads(raw)
+            if isinstance(value, dict): value = [value]
+            if not isinstance(value, list): raise ValueError('TELEGRAM_CHANNELS JSON must be an array or object')
+            return value
+        except json.JSONDecodeError:
+            # Also accept a simple Railway value such as: -1001,-1002,-1003
+            # or one channel ID per line.
+            values = [x.strip() for x in raw.replace('\\n', ',').replace('\\r', ',').split(',') if x.strip()]
+            if values and all(x.lstrip('-').isdigit() for x in values):
+                return [{'id': int(x)} for x in values]
+            raise ValueError('TELEGRAM_CHANNELS must be valid JSON, e.g. [{"id":"-100123"}], or comma-separated numeric IDs')
     @property
     def keys(self):
         return [x.strip() for x in self.tmdb_api_keys.split(',') if x.strip()]
