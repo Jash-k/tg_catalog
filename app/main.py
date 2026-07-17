@@ -1,196 +1,74 @@
-"""FastAPI application entry point.
-
-Startup sequence:
-  a. Initialize database connection pool
-  b. Run Alembic migrations (also run by startup.sh in containers)
-  c. Initialize Telegram client + TMDB service
-  d. Start APScheduler (first-ever run triggers a full historical scan)
-  e. Register API routes
-"""
-from __future__ import annotations
-
 import asyncio
 from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy import select, func
+from .config import settings
+from .db import init_db, Session, Content
+from .scanner import Scanner, scheduler, metadata_scheduler
 
-from app import __version__
-from app.api.router import api_router
-from app.config import get_settings
-from app.database import close_db, get_engine, run_migrations
-from app.services.scanner import TelegramScanner
-from app.services.scheduler import SchedulerService
-from app.services.tmdb import TMDBService
-from app.utils.logger import get_logger, setup_logging
+CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime','Anime')]
+scanner = Scanner()
 
-settings = get_settings()
-setup_logging(settings.LOG_LEVEL)
-logger = get_logger(__name__)
+def manifest():
+    cats = []
+    for cid, name in CATALOGS:
+        cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
+                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False},{'name':'skip','isRequired':False}]})
+    return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
+            'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
+            'idPrefixes':['tmdb:']}
 
-
-# ---------------------------------------------------------------------------
-# Optional API-key protection middleware
-# ---------------------------------------------------------------------------
-
-class APIKeyMiddleware(BaseHTTPMiddleware):
-    """If API_SECRET_KEY is set, every /api/ request (except /api/v1/health)
-    must carry a matching ``X-API-Key`` header."""
-
-    async def dispatch(self, request: Request, call_next):
-        secret = settings.api_secret_key_or_none
-        if (
-            secret
-            and request.url.path.startswith("/api/")
-            and not request.url.path.endswith("/health")
-        ):
-            provided = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-            if provided != secret:
-                return JSONResponse(
-                    status_code=401,
-                    content={
-                        "success": False,
-                        "error": {"code": 401, "message": "Invalid or missing X-API-Key header"},
-                    },
-                )
-        return await call_next(request)
-
-
-# ---------------------------------------------------------------------------
-# Lifespan: startup / shutdown
-# ---------------------------------------------------------------------------
+def item(row):
+    name = row.tamil_title or row.title if row.catalog == 'tamil_series' else row.title
+    # Preserve both names for discoverability without making the title noisy.
+    if row.tamil_title and row.tamil_title != row.title: name = f'{row.tamil_title} ({row.title})'
+    obj = {'id':f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
+           'poster':row.poster,'background':row.backdrop,'year':row.year,'imdbRating':row.rating,'genres':row.genres or [],
+           'director':row.director,'cast':[x.get('name') for x in (row.cast or [])], 'releaseInfo':str(row.year or '')}
+    if row.media_type == 'series': obj['videos'] = []
+    return obj
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting Tamil Content Catalog", extra={"version": __version__})
-
-    # a. Database pool
-    get_engine()
-    app.state.settings = settings
-
-    # b. Migrations (startup.sh also runs these; upgrade head is idempotent)
-    try:
-        await run_migrations()
-    except Exception as exc:  # noqa: BLE001 - never block the API from booting
-        logger.error("In-app migration run failed", extra={"error": str(exc)})
-
-    # c. External services
-    tmdb = TMDBService(settings)
-    scanner = TelegramScanner(settings=settings, tmdb_service=tmdb)
-    app.state.tmdb = tmdb
-    app.state.scanner = scanner
-
-    if scanner.is_configured:
-        asyncio.create_task(scanner.connect())  # non-blocking startup
-    else:
-        logger.warning("Telegram credentials missing; scanner disabled")
-
-    # d. Scheduler (handles first-run full scan + periodic jobs)
-    scheduler = SchedulerService(scanner=scanner, tmdb_service=tmdb, settings=settings)
-    scheduler.start()
-    app.state.scheduler = scheduler
-
-    logger.info("Startup complete")
+async def lifespan(app):
+    await init_db()
+    task = asyncio.create_task(scheduler(scanner))
+    refresh_task = asyncio.create_task(metadata_scheduler(scanner))
     yield
+    task.cancel(); refresh_task.cancel()
 
-    # Shutdown
-    logger.info("Shutting down")
-    scheduler.shutdown()
-    await scanner.disconnect()
-    await tmdb.aclose()
-    await close_db()
+app = FastAPI(title='Telegram TMDB Stremio Addon', lifespan=lifespan)
+@app.get('/manifest.json')
+async def get_manifest(): return manifest()
+@app.get('/catalog/{kind}/{catalog_id}.json')
+async def catalog(kind: str, catalog_id: str, request: Request):
+    return await catalog_impl(catalog_id, request)
+@app.get('/catalog/{kind}/{catalog_id}/{extra:path}.json')
+async def catalog_extra(kind: str, catalog_id: str, extra: str, request: Request):
+    return await catalog_impl(catalog_id, request)
+async def catalog_impl(catalog_id, request):
+    if catalog_id not in {x[0] for x in CATALOGS}: return JSONResponse({'metas':[]})
+    q = request.query_params.get('search','').strip()
+    genre = request.query_params.get('genre','').strip().lower()
+    try: skip = max(0, int(request.query_params.get('skip','0')))
+    except ValueError: skip = 0
+    page = settings.page_size
+    async with Session() as db:
+        stmt = select(Content).where(Content.catalog == catalog_id)
+        if q: stmt = stmt.where(Content.title.ilike(f'%{q}%'))
+        if genre: stmt = stmt.where(Content.genres.contains([request.query_params.get('genre')]))
+        # Tamil original series first; then newest metadata.
+        stmt = stmt.order_by(Content.sort_priority.asc(), Content.year.desc().nullslast(), Content.title.asc()).offset(skip).limit(page)
+        rows = (await db.execute(stmt)).scalars().all()
+    return {'metas':[item(x) for x in rows]}
 
+@app.get('/meta/{kind}/{meta_id}.json')
+async def meta(kind: str, meta_id: str):
+    try: tmdb_id = int(meta_id.split(':')[-1])
+    except ValueError: return JSONResponse({'meta':None}, status_code=404)
+    async with Session() as db:
+        row = (await db.execute(select(Content).where(Content.tmdb_id == tmdb_id))).scalars().first()
+    return {'meta': item(row) if row else None}
 
-# ---------------------------------------------------------------------------
-# App factory
-# ---------------------------------------------------------------------------
-
-app = FastAPI(
-    title="Tamil Content Catalog API",
-    description=(
-        "Private metadata catalog: Telegram channels -> cleaned titles -> "
-        "TMDB metadata -> 6 organized catalogs with a rich filter/search API. "
-        "Metadata only - no file links, no message IDs."
-    ),
-    version=__version__,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
-    lifespan=lifespan,
-)
-
-# CORS: permissive in development, restrict via ALLOWED_ORIGINS in production.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.allowed_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.add_middleware(APIKeyMiddleware)
-
-
-# ---------------------------------------------------------------------------
-# Consistent error envelope
-# ---------------------------------------------------------------------------
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "success": False,
-            "error": {"code": exc.status_code, "message": exc.detail},
-        },
-    )
-
-
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    return JSONResponse(
-        status_code=422,
-        content={
-            "success": False,
-            "error": {"code": 422, "message": "Validation error", "details": exc.errors()},
-        },
-    )
-
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.exception("Unhandled API error", extra={"path": request.url.path})
-    return JSONResponse(
-        status_code=500,
-        content={
-            "success": False,
-            "error": {"code": 500, "message": "Internal server error"},
-        },
-    )
-
-
-# e. API routes
-app.include_router(api_router, prefix="/api/v1")
-
-# Stremio addon protocol routes live at the domain root (Stremio requires
-# the standard /manifest.json, /catalog/... and /meta/... paths).
-from app.api.endpoints import stremio as stremio_endpoints  # noqa: E402
-
-app.include_router(stremio_endpoints.router)
-
-
-@app.get("/", include_in_schema=False)
-async def root() -> dict:
-    return {
-        "name": "Tamil Content Catalog API",
-        "version": __version__,
-        "docs": "/docs",
-        "redoc": "/redoc",
-        "api": "/api/v1",
-        "health": "/api/v1/health",
-        "stremio_addon": "/manifest.json",
-    }
+@app.get('/health')
+async def health(): return {'ok':True}
