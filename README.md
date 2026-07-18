@@ -26,7 +26,6 @@ A metadata-only Stremio addon. It scans Telegram media documents/captions with T
 
 ## Telegram session string
 
-Create the session string once on a trusted machine, where phone login is possible:
 
 ```bash
 pip install telethon
