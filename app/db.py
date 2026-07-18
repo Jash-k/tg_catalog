@@ -14,7 +14,13 @@ elif database_url.startswith('postgresql://'):
     database_url = 'postgresql+asyncpg://' + database_url[len('postgresql://'):]
 elif database_url.startswith('postgresql+psycopg2://'):
     database_url = 'postgresql+asyncpg://' + database_url[len('postgresql+psycopg2://'):]
-engine = create_async_engine(database_url, pool_pre_ping=True)
+engine = create_async_engine(
+    database_url,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    pool_timeout=30,
+    connect_args={'command_timeout': 60} if database_url.startswith('postgresql+asyncpg://') else {},
+)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 class Base(DeclarativeBase): pass
 

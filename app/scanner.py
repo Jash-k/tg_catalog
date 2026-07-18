@@ -130,6 +130,12 @@ class Scanner:
                         print(f'channel {channel_key}: checkpoint saved at message {last_processed_id}', flush=True)
                     except Exception as e:
                         stats['errors'] += 1
+                        # A failed PostgreSQL statement leaves the transaction aborted.
+                        # Roll it back before moving to the next channel.
+                        try:
+                            await db.rollback()
+                        except Exception as rollback_error:
+                            print(f'channel rollback failed for {channel}: {rollback_error}', flush=True)
                         print(f'channel scan failed for {channel}: {e}', flush=True)
             await client.disconnect()
             self.last_scan_stats = stats
