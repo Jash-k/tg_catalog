@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import asynccontextmanager
+from urllib.parse import unquote
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
@@ -13,6 +14,7 @@ LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),
 # Stremio manifest options must be an array of strings, not {title,value} objects.
 # The backend accepts the language code from the selected option.
 LANGUAGE_OPTIONS = [title for code, title in LANGUAGES]
+GENRE_OPTIONS = ['Action','Adventure','Animation','Comedy','Crime','Documentary','Drama','Family','Fantasy','Horror','Mystery','Romance','Science Fiction','Thriller','War','Western','History','Music','TV Movie']
 LANGUAGE_CODES = {title.lower(): code for code, title in LANGUAGES}
 scanner = Scanner()
 
@@ -20,7 +22,7 @@ def manifest():
     cats = []
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
-                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'skip','isRequired':False}]})
+                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
     return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tmdb:']}
@@ -29,7 +31,7 @@ def item(row):
     name = row.tamil_title or row.title if row.catalog == 'tamil_series' else row.title
     # Preserve both names for discoverability without making the title noisy.
     if row.tamil_title and row.tamil_title != row.title: name = f'{row.tamil_title} ({row.title})'
-    obj = {'id':f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
+    obj = {'id':row.imdb_id or f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
            'poster':row.poster,'background':row.backdrop,'year':row.year,'imdbRating':row.rating,'genres':row.genres or [],
            'director':row.director,'cast':[x.get('name') for x in (row.cast or [])], 'releaseInfo':str(row.year or ''), 'language':row.original_language}
     if row.media_type == 'series': obj['videos'] = []
@@ -53,32 +55,44 @@ async def catalog(kind: str, catalog_id: str, request: Request):
     return await catalog_impl(catalog_id, request)
 @app.get('/catalog/{kind}/{catalog_id}/{extra:path}.json')
 async def catalog_extra(kind: str, catalog_id: str, extra: str, request: Request):
-    return await catalog_impl(catalog_id, request)
-async def catalog_impl(catalog_id, request):
+    return await catalog_impl(catalog_id, request, extra)
+async def catalog_impl(catalog_id, request, extra=''):
+    # Stremio may send extras either as query parameters or as path segments:
+    # /catalog/movie/id/skip=50.json
+    params = dict(request.query_params)
+    for part in unquote(extra).split('&'):
+        if '=' in part:
+            key, value = part.split('=', 1)
+            params.setdefault(key, value)
     if catalog_id not in {x[0] for x in CATALOGS}: return JSONResponse({'metas':[]})
-    q = request.query_params.get('search','').strip()
-    genre = request.query_params.get('genre','').strip().lower()
-    language = request.query_params.get('language','').strip().lower()
+    q = params.get('search','').strip()
+    genre = params.get('genre','').strip().lower()
+    language = params.get('language','').strip().lower()
     language = LANGUAGE_CODES.get(language, language)
-    try: skip = max(0, int(request.query_params.get('skip','0')))
+    try: skip = max(0, int(params.get('skip','0')))
     except ValueError: skip = 0
-    page = settings.page_size
+    page = min(settings.page_size, 50)
     async with Session() as db:
         stmt = select(Content).where(Content.catalog == catalog_id)
         if q: stmt = stmt.where(Content.title.ilike(f'%{q}%'))
-        if genre: stmt = stmt.where(Content.genres.contains([request.query_params.get('genre')]))
+        if genre: stmt = stmt.where(Content.genres.contains([params.get('genre')]))
         if language: stmt = stmt.where(Content.original_language == language)
         # Tamil original series first; then newest metadata.
-        stmt = stmt.order_by(Content.sort_priority.asc(), Content.year.desc().nullslast(), Content.title.asc()).offset(skip).limit(page)
+        # LIFO catalog order: latest newly discovered content first.
+        stmt = stmt.order_by(Content.sort_priority.asc(), Content.discovered_at.desc().nullslast(), Content.year.desc().nullslast(), Content.title.asc()).offset(skip).limit(page)
         rows = (await db.execute(stmt)).scalars().all()
     return {'metas':[item(x) for x in rows]}
 
 @app.get('/meta/{kind}/{meta_id}.json')
 async def meta(kind: str, meta_id: str):
-    try: tmdb_id = int(meta_id.split(':')[-1])
-    except ValueError: return JSONResponse({'meta':None}, status_code=404)
+    identifier = meta_id.split(':')[-1]
     async with Session() as db:
-        row = (await db.execute(select(Content).where(Content.tmdb_id == tmdb_id))).scalars().first()
+        if identifier.startswith('tt'):
+            row = (await db.execute(select(Content).where(Content.imdb_id == identifier))).scalars().first()
+        else:
+            try: tmdb_id = int(identifier)
+            except ValueError: return JSONResponse({'meta':None}, status_code=404)
+            row = (await db.execute(select(Content).where(Content.tmdb_id == tmdb_id))).scalars().first()
     return {'meta': item(row) if row else None}
 
 @app.get('/health')

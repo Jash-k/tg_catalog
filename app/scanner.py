@@ -4,7 +4,7 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from sqlalchemy import select
 from .config import settings
-from .db import Session, Content, Unmatched
+from .db import Session, Content, Unmatched, ScanTracker
 from .cleaner import parse_filename
 from .tmdb import TMDB
 
@@ -67,8 +67,25 @@ class Scanner:
                         if isinstance(channel_ref, str) and channel_ref.strip().lstrip('-').isdigit():
                             channel_ref = int(channel_ref.strip())
                         entity = await client.get_entity(channel_ref)
-                        kwargs = {'limit': settings.max_messages_per_channel or None}
-                        async for message in client.iter_messages(entity, **kwargs):
+                        # Use the stable Telegram entity ID, not a mutable username, as the checkpoint key.
+                        channel_key = str(entity.id)
+                        tracker = (await db.execute(select(ScanTracker).where(ScanTracker.channel_key == channel_key))).scalar_one_or_none()
+                        if tracker is None:
+                            tracker = ScanTracker(channel_key=channel_key, last_message_id=0, historical_scan_completed=False)
+                            db.add(tracker)
+                            await db.flush()
+                        kwargs = {}
+                        if settings.max_messages_per_channel:
+                            kwargs['limit'] = settings.max_messages_per_channel
+                        if tracker.last_message_id:
+                            kwargs['min_id'] = tracker.last_message_id
+                        last_processed_id = tracker.last_message_id
+                        mode = 'incremental' if tracker.historical_scan_completed else 'historical'
+                        print(f'channel {channel_key}: {mode} scan from message {tracker.last_message_id}', flush=True)
+                        # Process channels in configured order and messages oldest-to-newest.
+                        async for message in client.iter_messages(entity, reverse=True, **kwargs):
+                            if getattr(message, 'id', None):
+                                last_processed_id = max(last_processed_id, message.id)
                             stats['messages'] += 1
                             if not message or not (getattr(message, 'file', None) or getattr(message, 'message', None)): continue
                             raw = media_name(message)
@@ -92,14 +109,25 @@ class Scanner:
                             if existing:
                                 if parsed.media_type == 'series': existing.seasons = sorted(set((existing.seasons or []) + parsed.seasons))
                                 existing.catalog = catalog
+                                # Refresh LIFO position whenever the title is discovered again.
+                                # This brings newly posted/reposted releases to the front.
+                                existing.discovered_at = datetime.utcnow()
+                                existing.imdb_id = details.get('imdb_id') or existing.imdb_id
+                                existing.original_language = details.get('original_language') or existing.original_language
                                 existing.sort_priority = 0 if catalog == 'tamil_series' and details.get('original_language') == 'ta' else existing.sort_priority
                                 existing.updated_at = __import__('datetime').datetime.utcnow()
                             else:
                                 is_tamil_series = catalog == 'tamil_series' and details.get('original_language') == 'ta'
                                 record = dict(details)
-                                record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons; record['updated_at'] = datetime.utcnow()
+                                record['catalog'] = catalog; record['sort_priority'] = 0 if is_tamil_series else 1; record['seasons'] = parsed.seasons; record['discovered_at'] = datetime.utcnow(); record['updated_at'] = datetime.utcnow()
                                 db.add(Content(**record))
                             await db.commit()
+                        # Commit the checkpoint only after this channel completed successfully.
+                        tracker.last_message_id = last_processed_id
+                        tracker.historical_scan_completed = True
+                        tracker.last_scan_at = datetime.utcnow()
+                        await db.commit()
+                        print(f'channel {channel_key}: checkpoint saved at message {last_processed_id}', flush=True)
                     except Exception as e:
                         stats['errors'] += 1
                         print(f'channel scan failed for {channel}: {e}', flush=True)
