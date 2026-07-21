@@ -4,7 +4,7 @@ from urllib.parse import unquote
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, cast, String
 from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
@@ -15,6 +15,7 @@ LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),
 # The backend accepts the language code from the selected option.
 LANGUAGE_OPTIONS = [title for code, title in LANGUAGES]
 GENRE_OPTIONS = ['Action','Adventure','Animation','Comedy','Crime','Documentary','Drama','Family','Fantasy','Horror','Mystery','Romance','Science Fiction','Thriller','War','Western','History','Music','TV Movie']
+SORT_OPTIONS = ['Latest Added','Year: Newest First','Year: Oldest First','Title: A-Z']
 LANGUAGE_CODES = {title.lower(): code for code, title in LANGUAGES}
 scanner = Scanner()
 
@@ -22,7 +23,7 @@ def manifest():
     cats = []
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
-                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
+                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'sort','isRequired':False,'options':SORT_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
     return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tmdb:']}
@@ -69,17 +70,26 @@ async def catalog_impl(catalog_id, request, extra=''):
     genre = params.get('genre','').strip().lower()
     language = params.get('language','').strip().lower()
     language = LANGUAGE_CODES.get(language, language)
+    sort = params.get('sort','').strip().lower()
     try: skip = max(0, int(params.get('skip','0')))
     except ValueError: skip = 0
     page = min(settings.page_size, 50)
     async with Session() as db:
         stmt = select(Content).where(Content.catalog == catalog_id)
         if q: stmt = stmt.where(Content.title.ilike(f'%{q}%'))
-        if genre: stmt = stmt.where(Content.genres.contains([params.get('genre')]))
+        if genre: stmt = stmt.where(cast(Content.genres, String).ilike(f'%"{params.get("genre")}"%'))
         if language: stmt = stmt.where(Content.original_language == language)
         # Tamil original series first; then newest metadata.
-        # LIFO catalog order: latest newly discovered content first.
-        stmt = stmt.order_by(Content.sort_priority.asc(), Content.discovered_at.desc().nullslast(), Content.year.desc().nullslast(), Content.title.asc()).offset(skip).limit(page)
+        if sort == 'year: newest first':
+            ordering = (Content.sort_priority.asc(), Content.year.desc().nullslast(), Content.title.asc())
+        elif sort == 'year: oldest first':
+            ordering = (Content.sort_priority.asc(), Content.year.asc().nullslast(), Content.title.asc())
+        elif sort == 'title: a-z':
+            ordering = (Content.sort_priority.asc(), Content.title.asc())
+        else:
+            # Default/LIFO: latest newly discovered content first.
+            ordering = (Content.sort_priority.asc(), Content.discovered_at.desc().nullslast(), Content.year.desc().nullslast(), Content.title.asc())
+        stmt = stmt.order_by(*ordering).offset(skip).limit(page)
         rows = (await db.execute(stmt)).scalars().all()
     return {'metas':[item(x) for x in rows]}
 
@@ -96,6 +106,7 @@ async def meta(kind: str, meta_id: str):
     return {'meta': item(row) if row else None}
 
 @app.get('/health')
+@app.get('/api/v1/health')
 async def health():
     return {
         'ok': True,
