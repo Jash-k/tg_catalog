@@ -26,7 +26,7 @@ def manifest():
                      'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'sort','isRequired':False,'options':SORT_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
     return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
-            'idPrefixes':['tmdb:']}
+            'idPrefixes':['tt','tmdb:']}
 
 def item(row):
     name = row.tamil_title or row.title if row.catalog == 'tamil_series' else row.title
