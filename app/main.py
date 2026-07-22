@@ -116,7 +116,20 @@ async def meta(kind: str, meta_id: str):
             try: tmdb_id = int(identifier)
             except ValueError: return JSONResponse({'meta':None}, status_code=404)
             row = (await db.execute(select(Content).where(Content.tmdb_id == tmdb_id))).scalars().first()
-    return {'meta': item(row) if row else None}
+    if not row:
+        return {'meta': None}
+    meta_item = item(row)
+    # Episode metadata is fetched from TMDB on demand and is not persisted locally.
+    # This keeps the database at one row per series while making episodes browseable.
+    if row.media_type == 'series':
+        episodes = []
+        for season_number in sorted(set(row.seasons or [])):
+            try:
+                episodes.extend(await scanner.tmdb.season_episodes(row.tmdb_id, row.imdb_id, season_number))
+            except Exception as exc:
+                print(f'episode metadata failed for {row.tmdb_id} season {season_number}: {exc}', flush=True)
+        meta_item['videos'] = episodes
+    return {'meta': meta_item}
 
 @app.get('/health')
 @app.get('/api/v1/health')

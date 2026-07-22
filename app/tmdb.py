@@ -1,6 +1,6 @@
 import asyncio
 import httpx
-from rapidfuzz.fuzz import ratio
+from rapidfuzz.fuzz import ratio, token_set_ratio, WRatio
 from .config import settings
 
 class TMDB:
@@ -24,9 +24,10 @@ class TMDB:
         data = await self.get(endpoint, {'query': title, year_key: year} if year else {'query': title})
         results = data.get('results', [])
         best, score = None, 0
-        for x in results[:10]:
+        for x in results[:20]:
             candidate = x.get('name' if media_type == 'series' else 'title', '')
-            s = ratio(title.lower(), candidate.lower()) / 100
+            a, b = title.casefold(), candidate.casefold()
+            s = max(ratio(a, b), token_set_ratio(a, b), WRatio(a, b)) / 100
             if year:
                 date = x.get('first_air_date' if media_type == 'series' else 'release_date', '')
                 if date[:4] == str(year): s += .18
@@ -51,3 +52,15 @@ class TMDB:
                 'release_date': d.get('first_air_date' if media_type == 'series' else 'release_date'),
                 'year': int((d.get('first_air_date' if media_type == 'series' else 'release_date') or '0')[:4]) or None,
                 'original_language': d.get('original_language')}
+
+    async def season_episodes(self, tmdb_id, imdb_id, season_number):
+        d = await self.get(f'/tv/{tmdb_id}/season/{season_number}')
+        videos = []
+        for ep in d.get('episodes', []):
+            ep_id = f'{imdb_id}:{season_number}:{ep.get("episode_number")}' if imdb_id else f'tmdb:series:{tmdb_id}:{season_number}:{ep.get("episode_number")}'
+            videos.append({'id': ep_id, 'title': ep.get('name') or f'Episode {ep.get("episode_number")}',
+                           'season': season_number, 'episode': ep.get('episode_number'),
+                           'overview': ep.get('overview') or '', 'released': ep.get('air_date'),
+                           'thumbnail': ('https://image.tmdb.org/t/p/w500' + ep['still_path']) if ep.get('still_path') else None,
+                           'runtime': ep.get('runtime')})
+        return videos
