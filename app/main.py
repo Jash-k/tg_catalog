@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -32,9 +32,14 @@ def item(row):
     name = row.tamil_title or row.title if row.catalog == 'tamil_series' else row.title
     # Preserve both names for discoverability without making the title noisy.
     if row.tamil_title and row.tamil_title != row.title: name = f'{row.tamil_title} ({row.title})'
+    cast_names = [x.get('name') for x in (row.cast or []) if x.get('name')]
+    links = []
+    if row.director:
+        links.append({'name': row.director, 'category': 'director', 'url': f'stremio:///search?search={quote(row.director)}'})
+    links.extend({'name': person, 'category': 'actor', 'url': f'stremio:///search?search={quote(person)}'} for person in cast_names)
     obj = {'id':row.imdb_id or f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
            'poster':row.poster,'background':row.backdrop,'year':row.year,'imdbRating':row.rating,'genres':row.genres or [],
-           'director':row.director,'cast':[x.get('name') for x in (row.cast or [])], 'releaseInfo':str(row.year or ''), 'language':row.original_language}
+           'director':row.director,'cast':cast_names, 'links':links, 'releaseInfo':str(row.year or ''), 'language':row.original_language}
     if row.media_type == 'series': obj['videos'] = []
     return obj
 
@@ -76,7 +81,15 @@ async def catalog_impl(catalog_id, request, extra=''):
     page = min(settings.page_size, 50)
     async with Session() as db:
         stmt = select(Content).where(Content.catalog == catalog_id)
-        if q: stmt = stmt.where(Content.title.ilike(f'%{q}%'))
+        if q:
+            pattern = f'%{q}%'
+            stmt = stmt.where(or_(
+                Content.title.ilike(pattern),
+                Content.tamil_title.ilike(pattern),
+                Content.english_title.ilike(pattern),
+                Content.director.ilike(pattern),
+                cast(Content.cast, String).ilike(pattern),
+            ))
         if genre: stmt = stmt.where(cast(Content.genres, String).ilike(f'%"{params.get("genre")}"%'))
         if language: stmt = stmt.where(Content.original_language == language)
         # Tamil original series first; then newest metadata.
