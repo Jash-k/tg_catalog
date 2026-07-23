@@ -22,9 +22,12 @@ def catalog_for(p, details, channel=None):
     genres = {x.lower() for x in (details.get('genres') or [])}
     is_anime = p.anime or 'animation' in genres or 'cartoon' in genres or (original_lang == 'ja' and 'animation' in genres)
     # A Tamil/multi-audio non-Tamil original belongs in the dubbed catalog,
-    # even if TMDB identifies it as a series, cartoon, or anime.
+    # even if TMDB identifies it as a cartoon or anime.
     if p.dubbed and original_lang != 'ta': return 'dubbed_movies'
     if is_anime: return 'anime_series' if p.media_type == 'series' else 'anime_movies'
+    # Collections accept Tamil, Malayalam, English/Hollywood, and non-anime animation movies.
+    if p.media_type == 'movie' and details.get('collection_id') and (original_lang in {'ta','ml','en'} or 'animation' in genres):
+        return 'collections'
     if p.media_type == 'series':
         return 'tamil_series' if original_lang in SOUTH_LANGUAGES else 'other_series'
     if p.dubbed: return 'dubbed_movies'
@@ -59,6 +62,7 @@ class Scanner:
                 # One TMDB lookup per normalized title during a scan. Episode files
                 # reuse the series result and never create episode metadata rows.
                 match_cache = {}
+                collection_cache = {}
                 for channel in settings.channels:
                     stats['channels'] += 1
                     try:
@@ -111,11 +115,24 @@ class Scanner:
                                 continue
                             stats['matched'] += 1
                             catalog = catalog_for(parsed, details, channel)
+                            if catalog == 'collections':
+                                collection_id = details['collection_id']
+                                if collection_id not in collection_cache:
+                                    collection_cache[collection_id] = await self.tmdb.collection_parts(collection_id)
+                                collection = collection_cache[collection_id]
+                                parts = collection.get('parts', [])
+                                ordered_ids = [part.get('id') for part in parts]
+                                details['collection_order'] = (ordered_ids.index(details['tmdb_id']) + 1) if details['tmdb_id'] in ordered_ids else 9999
+                                details['collection_popularity'] = sum(float(part.get('vote_average') or 0) for part in parts)
                             result = await db.execute(select(Content).where(Content.tmdb_id == details['tmdb_id'], Content.media_type == parsed.media_type))
                             existing = result.scalar_one_or_none()
                             if existing:
                                 if parsed.media_type == 'series': existing.seasons = sorted(set((existing.seasons or []) + parsed.seasons))
                                 existing.catalog = catalog
+                                existing.collection_id = details.get('collection_id')
+                                existing.collection_name = details.get('collection_name')
+                                existing.collection_order = details.get('collection_order')
+                                existing.collection_popularity = details.get('collection_popularity')
                                 # Refresh LIFO position whenever the title is discovered again.
                                 # This brings newly posted/reposted releases to the front.
                                 existing.discovered_at = datetime.utcnow()

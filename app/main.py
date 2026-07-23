@@ -9,7 +9,7 @@ from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
 
-CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime_movies','Anime Movies'),('anime_series','Anime Series')]
+CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('collections','Collections'),('other_movies','Other Movies'),('other_series','Other Series'),('anime_movies','Anime Movies'),('anime_series','Anime Series')]
 LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),('hi','Hindi'),('bn','Bengali'),('mr','Marathi'),('gu','Gujarati'),('pa','Punjabi'),('en','English'),('ko','Korean'),('ja','Japanese'),('zh','Chinese'),('es','Spanish'),('fr','French'),('de','German'),('pt','Portuguese'),('ru','Russian'),('ar','Arabic'),('tr','Turkish'),('id','Indonesian'),('th','Thai')]
 # Stremio manifest options must be an array of strings, not {title,value} objects.
 # The backend accepts the language code from the selected option.
@@ -32,6 +32,8 @@ def item(row):
     name = row.tamil_title or row.title if row.catalog == 'tamil_series' else row.title
     # Preserve both names for discoverability without making the title noisy.
     if row.tamil_title and row.tamil_title != row.title: name = f'{row.tamil_title} ({row.title})'
+    if row.catalog == 'collections' and row.collection_name:
+        name = f'{row.collection_name} — {name}'
     cast_names = [x.get('name') for x in (row.cast or []) if x.get('name')]
     links = []
     if row.director:
@@ -99,6 +101,9 @@ async def catalog_impl(catalog_id, request, extra=''):
             ordering = (Content.sort_priority.asc(), Content.year.asc().nullslast(), Content.title.asc())
         elif sort == 'title: a-z':
             ordering = (Content.sort_priority.asc(), Content.title.asc())
+        elif catalog_id == 'collections':
+            # Group by popular collection, then show parts in TMDB collection order.
+            ordering = (Content.collection_popularity.desc().nullslast(), Content.collection_id.asc().nullslast(), Content.collection_order.asc().nullslast(), Content.year.asc().nullslast(), Content.title.asc())
         else:
             # Default/LIFO: latest newly discovered content first.
             ordering = (Content.sort_priority.asc(), Content.discovered_at.desc().nullslast(), Content.year.desc().nullslast(), Content.title.asc())

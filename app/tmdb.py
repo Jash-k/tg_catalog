@@ -44,6 +44,7 @@ class TMDB:
         tamil = next((x.get('data', {}).get('name') or x.get('data', {}).get('title') for x in d.get('translations', {}).get('translations', []) if x.get('iso_639_1') == 'ta'), None)
         title = d.get('name' if media_type == 'series' else 'title')
         return {'tmdb_id': d['id'], 'imdb_id': d.get('external_ids', {}).get('imdb_id') or d.get('imdb_id'), 'media_type': media_type, 'title': title, 'english_title': title,
+                'collection_id': (d.get('belongs_to_collection') or {}).get('id'), 'collection_name': (d.get('belongs_to_collection') or {}).get('name'),
                 'tamil_title': tamil, 'overview': d.get('overview',''),
                 'poster': ('https://image.tmdb.org/t/p/w500' + d['poster_path']) if d.get('poster_path') else None,
                 'backdrop': ('https://image.tmdb.org/t/p/w1280' + d['backdrop_path']) if d.get('backdrop_path') else None,
@@ -52,6 +53,9 @@ class TMDB:
                 'release_date': d.get('first_air_date' if media_type == 'series' else 'release_date'),
                 'year': int((d.get('first_air_date' if media_type == 'series' else 'release_date') or '0')[:4]) or None,
                 'original_language': d.get('original_language')}
+
+    async def collection_parts(self, collection_id):
+        return await self.get(f'/collection/{collection_id}')
 
     async def season_episodes(self, tmdb_id, imdb_id, season_number):
         d = await self.get(f'/tv/{tmdb_id}/season/{season_number}')
