@@ -83,6 +83,12 @@ async def catalog_impl(catalog_id, request, extra=''):
     page = min(settings.page_size, 50)
     async with Session() as db:
         stmt = select(Content).where(Content.catalog == catalog_id)
+        if catalog_id == 'dubbed_movies':
+            # This is a movie catalog: never return series, anime/animation, or collections.
+            stmt = stmt.where(Content.media_type == 'movie', Content.collection_id.is_(None), ~cast(Content.genres, String).ilike('%Animation%'))
+        elif catalog_id in ('tamil_movies', 'other_movies'):
+            # Collection movies are exclusive to the Collections catalog.
+            stmt = stmt.where(Content.collection_id.is_(None))
         if q:
             pattern = f'%{q}%'
             stmt = stmt.where(or_(

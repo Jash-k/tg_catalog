@@ -21,10 +21,10 @@ def catalog_for(p, details, channel=None):
     original_lang = (details.get('original_language') or '').lower()
     genres = {x.lower() for x in (details.get('genres') or [])}
     is_anime = p.anime or 'animation' in genres or 'cartoon' in genres or (original_lang == 'ja' and 'animation' in genres)
-    # A Tamil/multi-audio non-Tamil original belongs in the dubbed catalog,
-    # even if TMDB identifies it as a cartoon or anime.
-    if p.dubbed and original_lang != 'ta': return 'dubbed_movies'
+    # Keep the Dubbed Movies catalog movie-only so Stremio never receives
+    # series/anime/collection records under a movie catalog.
     if is_anime: return 'anime_series' if p.media_type == 'series' else 'anime_movies'
+    if p.media_type == 'movie' and p.dubbed and original_lang != 'ta': return 'dubbed_movies'
     # Collections accept Tamil, Malayalam, English/Hollywood, and non-anime animation movies.
     if p.media_type == 'movie' and details.get('collection_id') and (original_lang in {'ta','ml','en'} or 'animation' in genres):
         return 'collections'
