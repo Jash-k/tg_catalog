@@ -39,7 +39,7 @@ def item(row):
     links.extend({'name': person, 'category': 'actor', 'url': f'stremio:///search?search={quote(person)}'} for person in cast_names)
     obj = {'id':row.imdb_id or f'tmdb:{row.media_type}:{row.tmdb_id}','type':row.media_type,'name':name,'description':row.overview or '',
            'poster':row.poster,'background':row.backdrop,'year':row.year,'imdbRating':row.rating,'genres':row.genres or [],
-           'director':row.director,'cast':cast_names, 'links':links, 'releaseInfo':str(row.year or ''), 'language':row.original_language}
+           'director':[row.director] if row.director else [],'cast':cast_names, 'links':links, 'releaseInfo':str(row.year or ''), 'language':row.original_language, 'posterShape':'poster'}
     if row.media_type == 'series': obj['videos'] = []
     return obj
 

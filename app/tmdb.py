@@ -60,7 +60,7 @@ class TMDB:
             ep_id = f'{imdb_id}:{season_number}:{ep.get("episode_number")}' if imdb_id else f'tmdb:series:{tmdb_id}:{season_number}:{ep.get("episode_number")}'
             videos.append({'id': ep_id, 'title': ep.get('name') or f'Episode {ep.get("episode_number")}',
                            'season': season_number, 'episode': ep.get('episode_number'),
-                           'overview': ep.get('overview') or '', 'released': ep.get('air_date'),
+                           'overview': ep.get('overview') or '', 'released': (ep.get('air_date') + 'T00:00:00.000Z') if ep.get('air_date') else None,
                            'thumbnail': ('https://image.tmdb.org/t/p/w500' + ep['still_path']) if ep.get('still_path') else None,
-                           'runtime': ep.get('runtime')})
+                           'runtime': f"{ep.get('runtime')}m" if ep.get('runtime') else None})
         return videos
