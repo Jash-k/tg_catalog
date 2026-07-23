@@ -20,8 +20,11 @@ def catalog_for(p, details, channel=None):
     # Classification is metadata-driven, so mixed channels do not need manual labels.
     original_lang = (details.get('original_language') or '').lower()
     genres = {x.lower() for x in (details.get('genres') or [])}
-    is_anime = p.anime or (original_lang == 'ja' and 'animation' in genres)
-    if is_anime: return 'anime'
+    is_anime = p.anime or 'animation' in genres or 'cartoon' in genres or (original_lang == 'ja' and 'animation' in genres)
+    # A Tamil/multi-audio non-Tamil original belongs in the dubbed catalog,
+    # even if TMDB identifies it as a series, cartoon, or anime.
+    if p.dubbed and original_lang != 'ta': return 'dubbed_movies'
+    if is_anime: return 'anime_series' if p.media_type == 'series' else 'anime_movies'
     if p.media_type == 'series':
         return 'tamil_series' if original_lang in SOUTH_LANGUAGES else 'other_series'
     if p.dubbed: return 'dubbed_movies'
@@ -87,7 +90,11 @@ class Scanner:
                             if getattr(message, 'id', None):
                                 last_processed_id = max(last_processed_id, message.id)
                             stats['messages'] += 1
-                            if not message or not (getattr(message, 'file', None) or getattr(message, 'message', None)): continue
+                            # Scan documents/media files only; ignore text posts, stickers,
+                            # webp images, and other non-document attachments.
+                            file = getattr(message, 'file', None)
+                            if not message or not file or not getattr(message, 'document', None): continue
+                            if getattr(file, 'mime_type', '') == 'image/webp' or getattr(file, 'ext', '').lower() in ('.webp', '.tgs', '.webm'): continue
                             raw = media_name(message)
                             if not raw: continue
                             parsed = parse_filename(raw, channel)

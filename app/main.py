@@ -9,7 +9,7 @@ from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
 
-CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime','Anime')]
+CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('other_movies','Other Movies'),('other_series','Other Series'),('anime_movies','Anime Movies'),('anime_series','Anime Series')]
 LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),('hi','Hindi'),('bn','Bengali'),('mr','Marathi'),('gu','Gujarati'),('pa','Punjabi'),('en','English'),('ko','Korean'),('ja','Japanese'),('zh','Chinese'),('es','Spanish'),('fr','French'),('de','German'),('pt','Portuguese'),('ru','Russian'),('ar','Arabic'),('tr','Turkish'),('id','Indonesian'),('th','Thai')]
 # Stremio manifest options must be an array of strings, not {title,value} objects.
 # The backend accepts the language code from the selected option.

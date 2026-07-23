@@ -82,3 +82,4 @@ async def init_db():
             await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_content_imdb_id ON content (imdb_id)")
             await conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_content_discovered_at ON content (discovered_at)")
             await conn.exec_driver_sql("UPDATE content SET discovered_at = updated_at WHERE discovered_at IS NULL")
+            await conn.exec_driver_sql("UPDATE content SET catalog = CASE WHEN media_type = 'series' THEN 'anime_series' ELSE 'anime_movies' END WHERE catalog = 'anime'")
