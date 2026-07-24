@@ -38,7 +38,8 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     # Multi-audio blocks such as Tamil + Multi or Telugu + Tamil count as Tamil audio.
     if re.search(r'(?i)\b(?:tamil|tam)\b', raw) and re.search(r'(?i)\b(?:multi|telugu|hindi|malayalam|kannada|english|japanese)\b', raw):
         dubbed = True
-    seasons = sorted({int(x) for x in re.findall(r'(?i)\bS(?:eason)?\s*([0-9]{1,2})(?=\b|\s*E)', raw)})
+    seasons = sorted({int(x) for x in re.findall(r'(?i)\b(?:S(?:eason)?|Season)\s*[:._-]?\s*([0-9]{1,2})(?=\b|\s*E|\s*Episode)', raw)})
+    seasons += [int(x) for x in re.findall(r'(?i)\bseason\s*[:._-]?\s*([0-9]{1,2})\b', raw)]
     seasons += [int(a) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons += [int(b) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons = sorted(set(seasons))
@@ -70,4 +71,6 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     title = fix_leet(title)
     title = re.sub(r'[^\w\s&\'’]', ' ', title)
     title = re.sub(r'\s+', ' ', title).strip(' -_.')
-    return ParsedName(raw, title, year, media_type, seasons or [1] if media_type == 'series' else [], anime, dubbed)
+    # Never invent Season 1. Only seasons explicitly parsed from channel media
+    # are exposed as available seasons.
+    return ParsedName(raw, title, year, media_type, sorted(set(seasons)) if media_type == 'series' else [], anime, dubbed)

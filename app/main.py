@@ -4,7 +4,7 @@ from urllib.parse import unquote, quote
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, func, or_, cast, String
+from sqlalchemy import select, func, or_, cast, String, case
 from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
@@ -110,7 +110,16 @@ async def catalog_impl(catalog_id, request, extra=''):
             ordering = (Content.sort_priority.asc(), Content.title.asc())
         elif catalog_id == 'collections':
             # Group by popular collection, then show parts in TMDB collection order.
-            ordering = (Content.collection_popularity.desc().nullslast(), Content.collection_id.asc().nullslast(), Content.collection_order.asc().nullslast(), Content.year.asc().nullslast(), Content.title.asc())
+            collection_priority = case(
+                (func.lower(Content.collection_name).like('%harry potter%'), 0),
+                (func.lower(Content.collection_name).like('%pirates of the caribbean%'), 1),
+                (func.lower(Content.collection_name).like('%indiana jones%'), 2),
+                (func.lower(Content.collection_name).like('%lord of the rings%'), 3),
+                (func.lower(Content.collection_name).like('%chronicles of narnia%'), 4),
+                (func.lower(Content.collection_name).like('%hunger games%'), 5),
+                else_=10,
+            )
+            ordering = (collection_priority.asc(), Content.collection_popularity.desc().nullslast(), Content.collection_id.asc().nullslast(), Content.collection_order.asc().nullslast(), Content.year.asc().nullslast(), Content.title.asc())
         else:
             # Default/LIFO: latest newly discovered content first.
             ordering = (Content.sort_priority.asc(), Content.discovered_at.desc().nullslast(), Content.year.desc().nullslast(), Content.title.asc())
