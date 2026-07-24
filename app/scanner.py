@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime
 from telethon import TelegramClient
 from telethon.utils import get_peer_id
@@ -12,10 +13,13 @@ from .tmdb import TMDB
 SOUTH = {'tamil','telugu','malayalam','kannada'}
 
 def media_name(message):
-    names = []
-    if getattr(message, 'file', None) and getattr(message.file, 'name', None): names.append(message.file.name)
-    if getattr(message, 'message', None): names.append(message.message)
-    return max(names, key=len, default='')
+    # Prefer the document filename. Captions often contain long technical text
+    # and can otherwise hide a perfectly good filename when choosing max(len).
+    filename = getattr(getattr(message, 'file', None), 'name', None)
+    caption = getattr(message, 'message', None) or ''
+    if filename and not re.match(r'(?i)^(?:file|video|document|media)[ _-]?\d+(?:\.[a-z0-9]+)?$', filename.strip()):
+        return filename
+    return caption or filename or ''
 
 def catalog_for(p, details, channel=None):
     # Classification is metadata-driven, so mixed channels do not need manual labels.
