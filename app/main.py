@@ -24,7 +24,7 @@ def manifest():
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
                      'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'sort','isRequired':False,'options':SORT_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
-    return {'id':'com.telegram.tmdb.catalog','version':'1.0.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
+    return {'id':'com.telegram.tmdb.catalog','version':'1.1.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tt','tmdb:']}
 
@@ -53,6 +53,7 @@ async def lifespan(app):
     progress_task = asyncio.create_task(progress_logger(scanner))
     yield
     task.cancel(); refresh_task.cancel(); progress_task.cancel()
+    await scanner.tmdb.http.aclose()
 
 app = FastAPI(title='Telegram TMDB Stremio Addon', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])

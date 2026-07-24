@@ -4,13 +4,16 @@ from rapidfuzz.fuzz import ratio, token_set_ratio, WRatio
 from .config import settings
 
 class TMDB:
-    def __init__(self): self.index = 0
+    def __init__(self):
+        self.index = 0
+        # Reuse one HTTP connection pool instead of creating a client for every
+        # filename; this significantly reduces latency during historical scans.
+        self.http = httpx.AsyncClient(base_url='https://api.themoviedb.org/3', timeout=25)
     async def get(self, path, params=None):
         params = dict(params or {}); params['api_key'] = settings.keys[self.index % len(settings.keys)]; params.setdefault('language', settings.tmdb_language)
         for attempt in range(len(settings.keys)):
             try:
-                async with httpx.AsyncClient(base_url='https://api.themoviedb.org/3', timeout=25) as c:
-                    r = await c.get(path, params=params)
+                r = await self.http.get(path, params=params)
                 if r.status_code in (401, 429, 500, 502, 503):
                     self.index += 1; params['api_key'] = settings.keys[self.index % len(settings.keys)]; continue
                 r.raise_for_status(); return r.json()
