@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from telethon import TelegramClient
+from telethon.utils import get_peer_id
 from telethon.sessions import StringSession
 from sqlalchemy import select
 from .config import settings
@@ -52,12 +53,25 @@ class Scanner:
         self.running = True
         self.last_scan_started = datetime.utcnow().isoformat() + 'Z'
         self.last_scan_error = None
-        stats = {'channels': 0, 'telegram_messages': 0, 'messages': 0, 'documents': 0, 'matched': 0, 'unmatched': 0, 'skipped_documents': 0, 'errors': 0}
+        stats = {'channels': 0, 'telegram_messages': 0, 'messages': 0, 'documents': 0, 'matched': 0, 'unmatched': 0, 'skipped_documents': 0, 'skip_reasons': {}, 'errors': 0}
+        def skip(reason):
+            stats['skipped_documents'] += 1
+            stats['skip_reasons'][reason] = stats['skip_reasons'].get(reason, 0) + 1
+
         self.current_scan_stats = stats
         print(f'scan started: {len(settings.channels)} configured channel(s)', flush=True)
         try:
             client = TelegramClient(StringSession(settings.telegram_session_string), settings.telegram_api_id, settings.telegram_api_hash)
             await client.start()
+            # Populate Telethon's entity cache from dialogs. Numeric channel IDs
+            # cannot be resolved from a StringSession unless this account has
+            # previously encountered/accessed the channel.
+            dialog_entities = {}
+            for dialog in await client.get_dialogs():
+                try:
+                    dialog_entities[get_peer_id(dialog.entity)] = dialog.entity
+                except Exception:
+                    pass
             async with Session() as db:
                 # One TMDB lookup per normalized title during a scan. Episode files
                 # reuse the series result and never create episode metadata rows.
@@ -73,7 +87,12 @@ class Scanner:
                         # Accept either a JSON number or a string in Railway variables.
                         if isinstance(channel_ref, str) and channel_ref.strip().lstrip('-').isdigit():
                             channel_ref = int(channel_ref.strip())
-                        entity = await client.get_entity(channel_ref)
+                        if isinstance(channel_ref, int):
+                            entity = dialog_entities.get(channel_ref)
+                            if entity is None:
+                                entity = await client.get_entity(channel_ref)
+                        else:
+                            entity = await client.get_entity(channel_ref)
                         # Use the stable Telegram entity ID, not a mutable username, as the checkpoint key.
                         channel_key = str(entity.id)
                         tracker = (await db.execute(select(ScanTracker).where(ScanTracker.channel_key == channel_key))).scalar_one_or_none()
@@ -106,17 +125,17 @@ class Scanner:
                             ext = (getattr(file, 'ext', '') or '').lower()
                             is_sticker = bool(getattr(message, 'sticker', None)) or mime in ('image/webp', 'application/x-tgsticker') or ext in ('.webp', '.tgs')
                             if is_sticker:
-                                stats['skipped_documents'] += 1
+                                skip('sticker')
                                 continue
                             stats['documents'] += 1
                             stats['messages'] += 1
                             raw = media_name(message)
                             if not raw:
-                                stats['skipped_documents'] += 1
+                                skip('missing_filename_or_caption')
                                 continue
                             parsed = parse_filename(raw, channel)
                             if len(parsed.title) < 2:
-                                stats['skipped_documents'] += 1
+                                skip('title_too_short')
                                 continue
                             match_key = (parsed.title.casefold(), parsed.year, parsed.media_type)
                             if match_key in match_cache:
