@@ -52,7 +52,7 @@ class Scanner:
         self.running = True
         self.last_scan_started = datetime.utcnow().isoformat() + 'Z'
         self.last_scan_error = None
-        stats = {'channels': 0, 'messages': 0, 'matched': 0, 'unmatched': 0, 'errors': 0}
+        stats = {'channels': 0, 'telegram_messages': 0, 'messages': 0, 'documents': 0, 'matched': 0, 'unmatched': 0, 'skipped_documents': 0, 'errors': 0}
         self.current_scan_stats = stats
         print(f'scan started: {len(settings.channels)} configured channel(s)', flush=True)
         try:
@@ -93,16 +93,31 @@ class Scanner:
                         async for message in client.iter_messages(entity, reverse=True, **kwargs):
                             if getattr(message, 'id', None):
                                 last_processed_id = max(last_processed_id, message.id)
-                            stats['messages'] += 1
+                            stats['telegram_messages'] += 1
                             # Scan documents/media files only; ignore text posts, stickers,
                             # webp images, and other non-document attachments.
                             file = getattr(message, 'file', None)
-                            if not message or not file or not getattr(message, 'document', None): continue
-                            if getattr(file, 'mime_type', '') == 'image/webp' or getattr(file, 'ext', '').lower() in ('.webp', '.tgs', '.webm'): continue
+                            # Accept all Telegram media/documents that expose a file
+                            # (videos may not always populate message.document). Skip
+                            # stickers only; WEBM can be a legitimate video document.
+                            if not message or not file:
+                                continue
+                            mime = (getattr(file, 'mime_type', '') or '').lower()
+                            ext = (getattr(file, 'ext', '') or '').lower()
+                            is_sticker = bool(getattr(message, 'sticker', None)) or mime in ('image/webp', 'application/x-tgsticker') or ext in ('.webp', '.tgs')
+                            if is_sticker:
+                                stats['skipped_documents'] += 1
+                                continue
+                            stats['documents'] += 1
+                            stats['messages'] += 1
                             raw = media_name(message)
-                            if not raw: continue
+                            if not raw:
+                                stats['skipped_documents'] += 1
+                                continue
                             parsed = parse_filename(raw, channel)
-                            if len(parsed.title) < 2: continue
+                            if len(parsed.title) < 2:
+                                stats['skipped_documents'] += 1
+                                continue
                             match_key = (parsed.title.casefold(), parsed.year, parsed.media_type)
                             if match_key in match_cache:
                                 details, confidence = match_cache[match_key]
