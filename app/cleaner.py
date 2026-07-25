@@ -56,6 +56,8 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     # Remove technical suffix/prefix blocks, including audio-language blocks.
     title = re.sub(QUALITY, ' ', title)
     title = re.sub(r'(?i)\b(?:tamil|telugu|malayalam|kannada|hindi|english|japanese|multi)\s*(?:audio|dub(?:bed)?|track)\b', ' ', title)
+    # Standalone language labels in release names, e.g. "Cooku With Comali (Tamil)".
+    title = re.sub(r'(?i)\b(?:tamil|tam|telugu|malayalam|kannada|hindi|english|japanese|multi)\b', ' ', title)
     title = re.sub(r'\[[^\]]*(?:www|telegram|subs?|audio|codec|\+|ddp|dts|atmos|bluray|hdrip|x26[45]|gb|mb|kbps)[^\]]*\]', ' ', title, flags=re.I)
     title = re.sub(r'\([^)]*(?:www|telegram|subs?|audio|codec|\+|ddp|dts|atmos|bluray|hdrip|x26[45]|gb|mb|kbps)[^)]*\)', ' ', title, flags=re.I)
     # Remove common scene/release-group suffixes, e.g. (W4F-Mack), after tags are gone.
