@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     scan_interval_hours: float = 4
     tmdb_refresh_interval_hours: float = 72
     max_messages_per_channel: int = 0
-    min_match_confidence: float = .58
+    min_match_confidence: float = .48
     page_size: int = 100
     admin_token: str = ''
 

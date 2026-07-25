@@ -38,12 +38,12 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     # Multi-audio blocks such as Tamil + Multi or Telugu + Tamil count as Tamil audio.
     if re.search(r'(?i)\b(?:tamil|tam)\b', raw) and re.search(r'(?i)\b(?:multi|telugu|hindi|malayalam|kannada|english|japanese)\b', raw):
         dubbed = True
-    seasons = sorted({int(x) for x in re.findall(r'(?i)\b(?:S(?:eason)?|Season)\s*[:._-]?\s*([0-9]{1,2})(?=\b|\s*E|\s*Episode)', raw)})
+    seasons = sorted({int(x) for x in re.findall(r'(?i)(?<![A-Za-z0-9])(?:S(?:eason)?|Season)\s*[:._-]?\s*([0-9]{1,2})(?=\b|\s*E|\s*Episode)', raw)})
     seasons += [int(x) for x in re.findall(r'(?i)\bseason\s*[:._-]?\s*([0-9]{1,2})\b', raw)]
     seasons += [int(a) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons += [int(b) for a, b in re.findall(r'(?i)\b(?:S|Season)\s*([0-9]{1,2})\s*[-–]?\s*S([0-9]{1,2})\b', raw)]
     seasons = sorted(set(seasons))
-    media_type = 'series' if seasons or re.search(r'(?i)\b(?:S\d{1,2}(?:E\d{1,3})?|E\d{1,3}|EP?\.?\s*\d+|complete\s*series|season)', raw) else 'movie'
+    media_type = 'series' if seasons or re.search(r'(?i)(?:^|[^A-Za-z0-9])(?:S\d{1,2}(?:E\d{1,3})?|E\d{1,3}|EP?\.?\s*\d+|complete\s*series|season)', raw) else 'movie'
     year_match = re.search(r'(?<!\d)((?:19|20)\d{2})(?!\d)', raw)
     year = int(explicit_year.group(1)) if explicit_year else (int(year_match.group(1)) if year_match else None)
     # Remove channel/release prefixes and archive parts before title text.
@@ -62,7 +62,12 @@ def parse_filename(raw: str, channel: dict) -> ParsedName:
     title = re.sub(r'\s*\([^)]{1,30}\)\s*$', ' ', title)
     title = re.sub(r'(?i)\b(?:zip|rar|7z|part\s*\d+|\d{3})\b', ' ', title)
     title_year_match = re.search(r'(?<!\d)((?:19|20)\d{2})(?!\d)', title)
-    if title_year_match and not explicit_title: title = title[:title_year_match.start()]
+    if media_type == 'series':
+        # Preserve years that are part of a series title, e.g. Scam 1992.
+        # Remove only parenthesized metadata years such as Bigg Boss (2024).
+        title = re.sub(r'(?i)\(\s*(?:19|20)\d{2}\s*\)', ' ', title)
+    elif title_year_match and not explicit_title:
+        title = title[:title_year_match.start()]
     if media_type == 'series':
         # For episode uploads, everything after Sxx/Eyy is release metadata.
         title = re.split(r'(?i)\s+S(?:eason)?\s*\d{1,2}(?:\s*[-–]\s*S\d{1,2})?(?:\s*E\d{1,3})?', title, maxsplit=1)[0]
