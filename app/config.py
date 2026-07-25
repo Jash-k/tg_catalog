@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     max_messages_per_channel: int = 0
     min_match_confidence: float = .58
     page_size: int = 100
+    admin_token: str = ''
 
     @property
     def channels(self):

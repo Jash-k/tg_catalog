@@ -8,6 +8,7 @@ from sqlalchemy import select, func, or_, cast, String, case
 from .config import settings
 from .db import init_db, Session, Content
 from .scanner import Scanner, scheduler, metadata_scheduler, progress_logger
+from .admin import register_admin
 
 CATALOGS = [('tamil_movies','Tamil Movies'),('dubbed_movies','Dubbed Movies'),('tamil_series','Tamil Series'),('collections','Collections'),('other_movies','Other Movies'),('other_series','Other Series'),('anime_movies','Anime Movies'),('anime_series','Anime Series')]
 LANGUAGES = [('ta','Tamil'),('ml','Malayalam'),('te','Telugu'),('kn','Kannada'),('hi','Hindi'),('bn','Bengali'),('mr','Marathi'),('gu','Gujarati'),('pa','Punjabi'),('en','English'),('ko','Korean'),('ja','Japanese'),('zh','Chinese'),('es','Spanish'),('fr','French'),('de','German'),('pt','Portuguese'),('ru','Russian'),('ar','Arabic'),('tr','Turkish'),('id','Indonesian'),('th','Thai')]
@@ -23,8 +24,8 @@ def manifest():
     cats = []
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
-                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'language','isRequired':False,'options':LANGUAGE_OPTIONS},{'name':'sort','isRequired':False,'options':SORT_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
-    return {'id':'com.telegram.tmdb.catalog','version':'1.1.0','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
+                     'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
+    return {'id':'com.telegram.tmdb.catalog','version':'1.1.1','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tt','tmdb:']}
 
@@ -57,6 +58,7 @@ async def lifespan(app):
 
 app = FastAPI(title='Telegram TMDB Stremio Addon', lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
+register_admin(app, scanner)
 @app.get('/manifest.json')
 async def get_manifest(): return manifest()
 @app.get('/catalog/{kind}/{catalog_id}.json')
