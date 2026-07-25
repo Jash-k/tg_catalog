@@ -33,6 +33,12 @@ class Settings(BaseSettings):
                 return [{'id': int(x)} for x in values]
             raise ValueError('TELEGRAM_CHANNELS must be valid JSON, e.g. [{"id":"-100123"}], or comma-separated numeric IDs')
     @property
+    def session_string(self):
+        # Railway values are occasionally pasted with quotes or line wrapping.
+        # StringSession is a single-line base64 value.
+        return ''.join(self.telegram_session_string.strip().strip('"').strip("'").split())
+
+    @property
     def keys(self):
         return [x.strip() for x in self.tmdb_api_keys.split(',') if x.strip()]
 

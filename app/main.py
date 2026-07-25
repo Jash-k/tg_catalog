@@ -25,7 +25,7 @@ def manifest():
     for cid, name in CATALOGS:
         cats.append({'id': cid, 'type':'series' if 'series' in cid else 'movie', 'name': name,
                      'extra':[{'name':'search','isRequired':False},{'name':'genre','isRequired':False,'options':GENRE_OPTIONS},{'name':'skip','isRequired':False,'options':['0','50','100','150','200']}]})
-    return {'id':'com.telegram.tmdb.catalog','version':'1.1.1','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
+    return {'id':'com.telegram.tmdb.catalog','version':'1.1.2','name':'Telegram TMDB Catalog','description':'Metadata catalog scanned from configured Telegram channels. No streams are provided.',
             'logo':'https://www.themoviedb.org/assets/2/v4/logos/one-color-blue.svg','resources':['catalog','meta'],'types':['movie','series'],'catalogs':cats,
             'idPrefixes':['tt','tmdb:']}
 

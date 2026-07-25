@@ -4,7 +4,7 @@ from datetime import datetime
 from telethon import TelegramClient
 from telethon.utils import get_peer_id
 from telethon.sessions import StringSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from .config import settings
 from .db import Session, Content, Unmatched, ScanTracker
 from .cleaner import parse_filename
@@ -65,7 +65,7 @@ class Scanner:
         self.current_scan_stats = stats
         print(f'scan started: {len(settings.channels)} configured channel(s)', flush=True)
         try:
-            client = TelegramClient(StringSession(settings.telegram_session_string), settings.telegram_api_id, settings.telegram_api_hash)
+            client = TelegramClient(StringSession(settings.session_string), settings.telegram_api_id, settings.telegram_api_hash)
             await client.start()
             # Populate Telethon's entity cache from dialogs. Numeric channel IDs
             # cannot be resolved from a StringSession unless this account has
@@ -152,6 +152,8 @@ class Scanner:
                                 db.add(Unmatched(raw_name=raw[:1000], cleaned_title=parsed.title[:500], year=parsed.year, media_type=parsed.media_type, reason=f'no confident TMDB match ({confidence:.2f})', created_at=datetime.utcnow()))
                                 continue
                             stats['matched'] += 1
+                            # Remove stale review rows when a later retry matches successfully.
+                            await db.execute(delete(Unmatched).where(Unmatched.cleaned_title == parsed.title, Unmatched.media_type == parsed.media_type))
                             catalog = catalog_for(parsed, details, channel)
                             if catalog == 'collections':
                                 collection_id = details['collection_id']
