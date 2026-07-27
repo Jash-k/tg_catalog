@@ -24,18 +24,26 @@ class TMDB:
     async def match(self, title, year, media_type):
         endpoint = '/search/tv' if media_type == 'series' else '/search/movie'
         year_key = 'first_air_date_year' if media_type == 'series' else 'year'
-        data = await self.get(endpoint, {'query': title, year_key: year} if year else {'query': title})
-        results = data.get('results', [])
+        # Filename years can be title years, season years, or remaster years.
+        # Retry without the year if the year-filtered search returns nothing.
+        searches = [({'query': title, year_key: year} if year else {'query': title})]
+        if year:
+            searches.append({'query': title})
         best, score = None, 0
-        for x in results[:20]:
-            candidate = x.get('name' if media_type == 'series' else 'title', '')
-            a, b = title.casefold(), candidate.casefold()
-            s = max(ratio(a, b), token_set_ratio(a, b), WRatio(a, b)) / 100
-            if year:
-                date = x.get('first_air_date' if media_type == 'series' else 'release_date', '')
-                if date[:4] == str(year): s += .18
-                elif date and abs(int(date[:4]) - year) > 1: s -= .12
-            if s > score: best, score = x, s
+        for params in searches:
+            data = await self.get(endpoint, params)
+            results = data.get('results', [])
+            for x in results[:20]:
+                candidate = x.get('name' if media_type == 'series' else 'title', '')
+                a, b = title.casefold(), candidate.casefold()
+                s = max(ratio(a, b), token_set_ratio(a, b), WRatio(a, b)) / 100
+                if year and params.get(year_key):
+                    date = x.get('first_air_date' if media_type == 'series' else 'release_date', '')
+                    if date[:4] == str(year): s += .18
+                    elif date and abs(int(date[:4]) - year) > 1: s -= .12
+                if s > score: best, score = x, s
+            if best and score >= settings.min_match_confidence:
+                break
         if not best or score < settings.min_match_confidence: return None, score
         return await self.details(best['id'], media_type), score
 

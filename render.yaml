@@ -1,0 +1,32 @@
+services:
+  - type: web
+    name: tg-catalog
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false
+      - key: TELEGRAM_SESSION_STRING
+        sync: false
+      - key: TELEGRAM_CHANNELS
+        sync: false
+      - key: TMDB_API_KEYS
+        sync: false
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: SCAN_INTERVAL_HOURS
+        value: "4"
+      - key: TMDB_REFRESH_INTERVAL_HOURS
+        value: "72"
+      - key: MIN_MATCH_CONFIDENCE
+        value: "0.48"
+      - key: PAGE_SIZE
+        value: "100"
