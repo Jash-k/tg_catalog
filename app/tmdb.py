@@ -49,6 +49,9 @@ class TMDB:
 
     async def details(self, tmdb_id, media_type):
         d = await self.get(f'/{"tv" if media_type == "series" else "movie"}/{tmdb_id}', {'append_to_response':'credits,translations,external_ids'})
+        if not d or not d.get('id'):
+            print(f'TMDB details unavailable: {media_type}/{tmdb_id}', flush=True)
+            return None
         credits = d.get('credits', {})
         cast = [{'name': x.get('name'), 'character': x.get('character')} for x in credits.get('cast', [])[:10]]
         director = next((x.get('name') for x in credits.get('crew', []) if x.get('job') == 'Director'), None)
